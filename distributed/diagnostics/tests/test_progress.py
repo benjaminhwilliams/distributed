@@ -46,6 +46,23 @@ async def test_many_Progress(c, s, a, b):
 
 
 @gen_cluster(client=True)
+async def test_Progress_no_deps(c, s, a, b):
+    x = c.submit(f, 1)
+    y = c.submit(g, x)
+    z = c.submit(h, y)
+
+    p = Progress(keys=[z], scheduler=s, dependencies=False)
+    await p.setup()
+
+    assert p.all_keys == {z.key}
+
+    await z
+
+    assert p.keys == set()
+    assert p.status == "finished"
+
+
+@gen_cluster(client=True)
 async def test_multiprogress(c, s, a, b):
     x1 = c.submit(f, 1)
     x2 = c.submit(f, x1)
@@ -60,6 +77,30 @@ async def test_multiprogress(c, s, a, b):
         "f": {f.key for f in [x1, x2, x3]},
         "g": {f.key for f in [y1, y2]},
     }
+
+    await x3
+
+    assert p.keys["f"] == set()
+
+    await y2
+
+    assert p.keys == {"f": set(), "g": set()}
+
+    assert p.status == "finished"
+
+
+@gen_cluster(client=True)
+async def test_multiprogress_no_deps(c, s, a, b):
+    x1 = c.submit(f, 1)
+    x2 = c.submit(f, x1)
+    x3 = c.submit(f, x2)
+    y1 = c.submit(g, x3)
+    y2 = c.submit(g, y1)
+
+    p = MultiProgress([x3, y2], scheduler=s, complete=True, dependencies=False)
+    await p.setup()
+
+    assert p.all_keys == {"f": {x3.key}, "g": {y2.key}}
 
     await x3
 

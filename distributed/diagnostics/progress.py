@@ -16,9 +16,12 @@ from distributed.metrics import time
 logger = logging.getLogger(__name__)
 
 
-def dependent_keys(tasks, complete=False):
+def collect_keys(tasks, complete=False, dependencies=True):
     """
-    All keys that need to compute for these keys to finish.
+    Find the computation state of a sequence of task keys.
+
+    If *dependencies* is true, also find the state of all keys that
+    need to finish for the specified keys to be computed.
 
     If *complete* is false, omit tasks that are busy processing or
     have finished executing.
@@ -39,7 +42,9 @@ def dependent_keys(tasks, complete=False):
                 continue
 
         out.add(key)
-        stack.extend(ts.dependencies)
+        if dependencies:
+            stack.extend(ts.dependencies)
+
     return out, errors
 
 
@@ -47,10 +52,10 @@ class Progress(SchedulerPlugin):
     """Tracks progress of a set of keys or futures
 
     On creation we provide a set of keys or futures that interest us as well as
-    a scheduler.  We traverse through the scheduler's dependencies to find all
-    relevant keys on which our keys depend.  We then plug into the scheduler to
-    learn when our keys become available in memory at which point we record
-    their completion.
+    a scheduler.  Optionally, we traverse through the scheduler's dependencies to
+    find all relevant keys on which our keys depend.  We then plug into the
+    scheduler to learn when our keys become available in memory at which point we
+    record their completion.
 
     State
     -----
@@ -63,12 +68,22 @@ class Progress(SchedulerPlugin):
     notably TextProgressBar and ProgressWidget, which do perform visualization.
     """
 
-    def __init__(self, keys, scheduler, minimum=0, dt=0.1, complete=False, name=None):
+    def __init__(
+        self,
+        keys,
+        scheduler,
+        minimum=0,
+        dt=0.1,
+        complete=False,
+        dependencies=True,
+        name=None,
+    ):
         self.name = name or f"progress-{tokenize(keys, minimum, dt, complete)}"
         self.keys = {k.key if hasattr(k, "key") else k for k in keys}
         self.keys = {stringify(k) for k in self.keys}
         self.scheduler = scheduler
         self.complete = complete
+        self.dependencies = dependencies
         self._minimum = minimum
         self._dt = dt
         self.last_duration = 0
@@ -88,11 +103,15 @@ class Progress(SchedulerPlugin):
         self.keys = None
 
         self.scheduler.add_plugin(self)  # subtle race condition here
-        self.all_keys, errors = dependent_keys(tasks, complete=self.complete)
+        self.all_keys, errors = collect_keys(
+            tasks, complete=self.complete, dependencies=self.dependencies
+        )
         if not self.complete:
             self.keys = self.all_keys.copy()
         else:
-            self.keys, _ = dependent_keys(tasks, complete=False)
+            self.keys, _ = collect_keys(
+                tasks, complete=False, dependencies=self.dependencies
+            )
         self.all_keys.update(keys)
         self.keys |= errors & self.all_keys
 
@@ -160,12 +179,25 @@ class MultiProgress(Progress):
     """
 
     def __init__(
-        self, keys, scheduler=None, func=key_split, minimum=0, dt=0.1, complete=False
+        self,
+        keys,
+        scheduler=None,
+        func=key_split,
+        minimum=0,
+        dt=0.1,
+        complete=False,
+        dependencies=True,
     ):
         self.func = func
         name = f"multi-progress-{tokenize(keys, func, minimum, dt, complete)}"
         super().__init__(
-            keys, scheduler, minimum=minimum, dt=dt, complete=complete, name=name
+            keys,
+            scheduler,
+            minimum=minimum,
+            dt=dt,
+            complete=complete,
+            dependencies=dependencies,
+            name=name,
         )
 
     async def setup(self):
@@ -179,11 +211,15 @@ class MultiProgress(Progress):
         self.keys = None
 
         self.scheduler.add_plugin(self)  # subtle race condition here
-        self.all_keys, errors = dependent_keys(tasks, complete=self.complete)
+        self.all_keys, errors = collect_keys(
+            tasks, complete=self.complete, dependencies=self.dependencies
+        )
         if not self.complete:
             self.keys = self.all_keys.copy()
         else:
-            self.keys, _ = dependent_keys(tasks, complete=False)
+            self.keys, _ = collect_keys(
+                tasks, complete=False, dependencies=self.dependencies
+            )
         self.all_keys.update(keys)
         self.keys |= errors & self.all_keys
 

@@ -35,7 +35,9 @@ def get_scheduler(scheduler):
 
 
 class ProgressBar:
-    def __init__(self, keys, scheduler=None, interval="100ms", complete=True):
+    def __init__(
+        self, keys, scheduler=None, interval="100ms", complete=True, dependencies=True
+    ):
         self.scheduler = get_scheduler(scheduler)
 
         self.client = None
@@ -47,6 +49,7 @@ class ProgressBar:
         self.keys = {k.key if hasattr(k, "key") else k for k in keys}
         self.interval = dask.utils.parse_timedelta(interval, default="s")
         self.complete = complete
+        self.dependencies = dependencies
         self._start_time = default_timer()
 
     @property
@@ -55,10 +58,11 @@ class ProgressBar:
 
     async def listen(self):
         complete = self.complete
+        dependencies = self.dependencies
         keys = self.keys
 
         async def setup(scheduler):
-            p = Progress(keys, scheduler, complete=complete)
+            p = Progress(keys, scheduler, complete=complete, dependencies=dependencies)
             await p.setup()
             return p
 
@@ -123,11 +127,12 @@ class TextProgressBar(ProgressBar):
         width=40,
         loop=None,
         complete=True,
+        dependencies=True,
         start=True,
         **kwargs,
     ):
         self._loop_runner = loop_runner = LoopRunner(loop=loop)
-        super().__init__(keys, scheduler, interval, complete)
+        super().__init__(keys, scheduler, interval, complete, dependencies)
         self.width = width
 
         if start:
@@ -183,10 +188,11 @@ class ProgressWidget(ProgressBar):
         scheduler=None,
         interval="100ms",
         complete=False,
+        dependencies=True,
         loop=None,
         **kwargs,
     ):
-        super().__init__(keys, scheduler, interval, complete)
+        super().__init__(keys, scheduler, interval, complete, dependencies)
 
         from ipywidgets import HTML, FloatProgress, HBox, VBox
 
@@ -246,6 +252,7 @@ class MultiProgressBar:
         func=key_split,
         interval="100ms",
         complete=False,
+        dependencies=True,
         **kwargs,
     ):
         self.scheduler = get_scheduler(scheduler)
@@ -260,6 +267,7 @@ class MultiProgressBar:
         self.func = func
         self.interval = interval
         self.complete = complete
+        self.dependencies = dependencies
         self._start_time = default_timer()
 
     @property
@@ -268,11 +276,14 @@ class MultiProgressBar:
 
     async def listen(self):
         complete = self.complete
+        dependencies = self.dependencies
         keys = self.keys
         func = self.func
 
         async def setup(scheduler):
-            p = MultiProgress(keys, scheduler, complete=complete, func=func)
+            p = MultiProgress(
+                keys, scheduler, complete=complete, dependencies=dependencies, func=func
+            )
             await p.setup()
             return p
 
@@ -342,9 +353,10 @@ class MultiProgressWidget(MultiProgressBar):
         interval=0.1,
         func=key_split,
         complete=False,
+        dependencies=True,
         **kwargs,
     ):
-        super().__init__(keys, scheduler, func, interval, complete)
+        super().__init__(keys, scheduler, func, interval, complete, dependencies)
         from ipywidgets import VBox
 
         self.widget = VBox([])
@@ -429,7 +441,9 @@ class MultiProgressWidget(MultiProgressBar):
             )
 
 
-def progress(*futures, notebook=None, multi=True, complete=True, **kwargs):
+def progress(
+    *futures, notebook=None, multi=True, complete=True, dependencies=True, **kwargs
+):
     """Track progress of futures
 
     This operates differently in the notebook and the console
@@ -448,6 +462,9 @@ def progress(*futures, notebook=None, multi=True, complete=True, **kwargs):
     complete : bool (optional)
         Track all keys (True) or only keys that have not yet run (False)
         (defaults to True)
+    dependencies : bool (optional)
+        In addition to the specified keys, track all the keys that must
+        finish for the specified keys to run (defaults to True)
 
     Notes
     -----
@@ -467,9 +484,13 @@ def progress(*futures, notebook=None, multi=True, complete=True, **kwargs):
         notebook = is_kernel()  # often but not always correct assumption
     if notebook:
         if multi:
-            bar = MultiProgressWidget(futures, complete=complete, **kwargs)
+            bar = MultiProgressWidget(
+                futures, complete=complete, dependencies=dependencies, **kwargs
+            )
         else:
-            bar = ProgressWidget(futures, complete=complete, **kwargs)
+            bar = ProgressWidget(
+                futures, complete=complete, dependencies=dependencies, **kwargs
+            )
         return bar
     else:
-        TextProgressBar(futures, complete=complete, **kwargs)
+        TextProgressBar(futures, complete=complete, dependencies=dependencies, **kwargs)
